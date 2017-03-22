@@ -50,21 +50,22 @@ def get_image_angle(curr_sample, cam=0, flipped=0, corr_val=0.2, brightness_mode
 ###      image: the final image
 def change_brightness(image, factor=1.0):
     image = cv2.cvtColor(image,cv2.COLOR_RGB2HSV)
-    image = np.array(image, dtype = np.float64)
+    #image = np.array(image, dtype = np.float64)
     image[:,:,2] = image[:,:,2]*factor
-    image[:,:,2][image[:,:,2]>255]  = 255
-    image = np.array(image, dtype = np.uint8)
+    #image[:,:,2][image[:,:,2]>255]  = 255
+    #image = np.array(image, dtype = np.uint8)
     image = cv2.cvtColor(image,cv2.COLOR_HSV2RGB)
+	
     return image
 
 ### plot_histo: 
 ###   Plot histogram according to the hist and bins 
-def plot_histo(hist, bins):
+def plot_histo(hist, bins, title=''):
     width = 0.7 * (bins[1] - bins[0])
     center = (bins[:-1] + bins[1:]) / 2
     plt.figure()
     plt.bar(center, hist, align='center', width=width)
-    plt.title('Histogram of angles')
+    plt.title(title)
     plt.xlabel('Angle')
     plt.ylabel('Number of appearances')
     plt.show() 
@@ -75,20 +76,20 @@ def plot_histo(hist, bins):
 ###		is_validation: to use for validation or training (in training we will use all cameras and also flip the images)
 ###		batch_size: how many samples to return each call
 ###		corr_val: by how much to "correct" the angle on the left (corr_val) or right (-corr_val) cameras 
-###		num_augmn: augmentation factor. we use 2 for original image and the flipped one 
+###		num_fliplr: augmentation factor. we use 2 for original image and the flipped one 
 ###
 ###   Output: 
 ###      np arrays of the images and the matching angles
-def generator(samples, is_validation=False, batch_size=32, corr_val=0.2, num_augmn=2):
+def generator(samples, is_validation=False, batch_size=32, corr_val=0.2, num_fliplr=2):
 	##
 	## Inputs:
-	##   num_augmn: Factor of augmentation. We will augment the train samples by flipping them
+	##   num_fliplr: Factor of augmentation. We will augment the train samples by flipping them
 	corr_vec=[0.0, corr_val, 0.0-corr_val] # Correction for the steering: [center, left, right]
 	num_samples = len(samples) # Number of input samples
 	num_camera = len(corr_vec) # Number of cameras we will use for the training samples
 	num_total = num_samples    # Number of the total samples we will use.
 	if is_validation==False:
-		num_total *= (num_augmn*num_camera)
+		num_total *= (num_fliplr*num_camera)
 	
 	#
 	# all the possible indexes of samples we will use.
@@ -106,14 +107,14 @@ def generator(samples, is_validation=False, batch_size=32, corr_val=0.2, num_aug
 			for idx in batch_idx:
 				if is_validation==False: # we use all 3 cameras and the flipped image
 					cam = (idx%num_camera)
-					flipped = int(idx/num_camera)%num_augmn
-					curr_sample = samples[int(idx/(num_camera*num_augmn))]
+					flipped = int(idx/num_camera)%num_fliplr
+					curr_sample = samples[int(idx/(num_camera*num_fliplr))]
 					brightness_mode=1
 				else: # we use only the original image from the center camera
 					cam = 0
 					flipped = 0
 					curr_sample = samples[idx]
-					brightness_mode=1
+					brightness_mode=0
 				
 				image,angle = get_image_angle(curr_sample, cam, flipped, corr_val, brightness_mode)
 				images.append(image)
@@ -128,22 +129,25 @@ def generator(samples, is_validation=False, batch_size=32, corr_val=0.2, num_aug
 ####  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Part B: Configuration ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~  ####
 ###
 ### Global Params
-num_augmn  = 2    # Factor of augmentation. We will augment the train samples by flipping them
+num_fliplr  = 2    # Factor of augmentation. We will augment the train samples by flipping them
 num_camera = 3    # Number of cameras we will use for the training samples
 
 ###
 ### Tune Params
-batch_size = 128               # The betch size for the training and validation
-crop_top, crop_bottom = 65, 25 # By how many pixels to crop form the top and bottom
-#crop_top, crop_bottom = 32, 12 # By how many pixels to crop form the top and bottom
-corr_val = 0.25                # by how much to "correct" the angle on the left (corr_val) or right (-corr_val) cameras
+balacing_en = True                                  # Balancing the data. Augmentation for the low probability angles
+batch_size = 128                                    # The betch size for the training and validation
+crop_top_ratio, crop_bottom_ratio = 0.406, 0.156    # By how many pixels to crop form the top and bottom
+corr_val = 0.25                                     # by how much to "correct" the angle on the left (corr_val) or right (-corr_val) cameras
+low_brightness, high_brightness = 0.25, 1.25        # minimal and maximal values of brightness augmentation 
 
 ###
 ### Plot options
 ###    plot_example: Plot an example of the images at the sane time from the center, left and right
 ###                  Also the augmentation on those images and the cropping we will use.
+###    plot_hist: Plot the angle histogram before and after balancing 
 ###    plot_fit: Plot the model fit (mse) for both the training and validation data as a function of the epoch 
 plot_example = False  
+plot_hist = False
 plot_fit = False
 
 
@@ -167,46 +171,44 @@ with open ('./data/driving_log.csv') as csvfile:
 			break
 
 
-
-			
-
 train_lines, validation_lines = train_test_split(lines, test_size=0.2)
 n_train_org = len(train_lines)
 n_valid = len(validation_lines)
 print('Number of Original Training Points = {}'.format(n_train_org))
 print('Number of Validation Points = {}'.format(n_valid))
 
+if balacing_en:
+	bins = np.arange(-11,13,2)/20.0
+	hist, bins = np.histogram(np.array(all_angles), bins=bins)
+	if plot_hist:
+		plot_histo(hist, bins, 'Histogram of angles, Before Balancing')
 
-bins = np.arange(-11,13,2)/20.0
+	bin_minimal_val = hist.mean()#+hist.std()
+	balance_per_bin = bin_minimal_val-hist
+	balance_per_inst = np.ceil(balance_per_bin/hist)
+	balance_per_inst = balance_per_inst.clip(min=0.0).astype(int)
 
-hist, bins = np.histogram(np.array(all_angles), bins=bins)
-#plot_histo(hist, bins)
+	for k in range(n_train_org):
+		train_lines[k][4] = 0.0
+		line = train_lines[k]
+		ang_bin = int(np.floor((float(line[3])-bins.min())*10.0))
+		ang_bin = max(0, min(ang_bin, len(balance_per_inst)-1))
+		for j in range(balance_per_inst[ang_bin]):
+			line[4] = np.random.uniform(low=low_brightness, high=high_brightness)
+			train_lines.append(line)
+			all_angles.append(float(line[3]))
 
-bin_minimal_val = hist.mean()+hist.std()
-balance_per_bin = bin_minimal_val-hist
-balance_per_inst = np.ceil(balance_per_bin/hist)
-balance_per_inst = balance_per_inst.clip(min=0.0).astype(int)
+	hist, bins = np.histogram(np.array(all_angles), bins=bins)
+	if plot_hist:
+		plot_histo(hist, bins, 'Histogram of angles, After Balancing')
 
-for k in range(n_train_org):
-	train_lines[k][4] = 0.0
-	line = train_lines[k]
-	ang_bin = int(np.floor((float(line[3])-bins.min())*10.0))
-	ang_bin = max(0, min(ang_bin, len(balance_per_inst)-1))
-	for j in range(balance_per_inst[ang_bin]):
-		line[4] = np.random.uniform(low=0.5, high=1.5)
-		train_lines.append(line)
-		all_angles.append(float(line[3]))
-
-hist, bins = np.histogram(np.array(all_angles), bins=bins)
-plot_histo(hist, bins)
-
-n_train = len(train_lines)*num_augmn*num_camera
+n_train = len(train_lines)*num_fliplr*num_camera
 print('Number of Training Points After Augmentation and use of all cameras = {}'.format(n_train))
 
 
 ###
 ### compile and train the model using the generator function
-train_generator = generator(train_lines, is_validation=False, batch_size=batch_size, corr_val=corr_val, num_augmn=num_augmn)
+train_generator = generator(train_lines, is_validation=False, batch_size=batch_size, corr_val=corr_val, num_fliplr=num_fliplr)
 validation_generator = generator(validation_lines, is_validation=True, batch_size=batch_size)
 
 ### 
@@ -215,21 +217,34 @@ example_idx = random.randint(0, n_train_org-1)
 example_image,example_angle = get_image_angle(train_lines[example_idx], 0, 0, corr_val)
 example_X = np.array(example_image)
 X_shape = np.shape(example_X)
-print('Image Size = {}x{}x{}'.format(X_shape[0],X_shape[1],X_shape[2]))
+
+crop_top = int(np.round((X_shape[0]*crop_top_ratio)))         # By how many pixels to crop form the top
+crop_bottom = int(np.round((X_shape[0]*crop_bottom_ratio)))      # By how many pixels to crop form the bottom
+print('Image Size = {}x{}x{} ; crop=[top:{} bottom:{}]'.format(X_shape[0],X_shape[1],X_shape[2],crop_top,crop_bottom))
 
 if plot_example:
 	cam_pos=['Center','left','rigth']
 	is_flipped=['Orginal','Flipped']
 	plt.figure(1)
 	for i in range(num_camera):
-		for j in range(num_augmn):
+		for j in range(num_fliplr):
 			example_image,example_angle = get_image_angle(train_lines[example_idx], i, j, corr_val)
 			example_X = np.array(example_image)
-			plt.subplot(num_augmn,num_camera,1+i+j*num_camera)
-			plt.imshow(cv2.cvtColor(example_X.squeeze(), cv2.COLOR_BGR2RGB))
+			plt.subplot(num_fliplr,num_camera,1+i+j*num_camera)
+			#plt.imshow(cv2.cvtColor(example_X.squeeze(), cv2.COLOR_BGR2RGB))
+			plt.imshow(example_X.squeeze())
 			plt.plot([0,X_shape[1]], [crop_top,crop_top],'r')
 			plt.plot([0,X_shape[1]], [X_shape[0]-crop_bottom,X_shape[0]-crop_bottom],'r')
 			plt.title('idx={}, {}, {}, angle={:.3f}'.format(example_idx, cam_pos[i], is_flipped[j], example_angle))
+	plt.show()
+	
+	brightness_example=[0.0, low_brightness, 1.0, high_brightness]
+	plt.figure(2)
+	for i in range(len(brightness_example)):
+		plt.subplot(2,2,i+1)
+		example_image,_ = get_image_angle(train_lines[example_idx], 0, 0, corr_val, int(1000*float(brightness_example[i])))
+		example_X = np.array(example_image)
+		plt.imshow(example_X.squeeze())		
 	plt.show()
 
 	
@@ -258,7 +273,7 @@ model.add(Dense(1))
 model.compile(loss='mse', optimizer='adam')
 history_object = model.fit_generator(train_generator, samples_per_epoch=n_train, \
             validation_data=validation_generator, nb_val_samples=n_valid, \
-            nb_epoch=6)
+            nb_epoch=3)
 
 if plot_fit:
 	plt.figure(2)
