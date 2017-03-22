@@ -22,17 +22,52 @@ import matplotlib.pyplot as plt
 ###   Output: 
 ###      image: the final image
 ###      angle: the final angle
-def get_image_angle(curr_sample, cam=0, flipped=0, corr_val=0.2):
+def get_image_angle(curr_sample, cam=0, flipped=0, corr_val=0.2, brightness_mode=0):
 	corr_vec=[0.0, corr_val, 0.0-corr_val] # Correction for the steering: [center, left, right]
-	filename = './data/data/IMG/'+curr_sample[cam].split('/')[-1]  # Mod3 will give us: center, left, right
+	filename = './data/IMG/'+curr_sample[cam].split('/')[-1]  # Mod3 will give us: center, left, right
 	image = cv2.imread(filename)
 	angle = float(curr_sample[3]) + corr_vec[cam]
 	if flipped:
 		image = cv2.flip(image,1)
 		angle = 0.0-angle
-
+	
+	image = cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
+	if brightness_mode==1:
+		image = change_brightness(image, float(curr_sample[4]))
+	elif brightness_mode>1:
+		image = change_brightness(image, float(brightness_mode)/1000.0)
+	
+	#image = cv2.resize(image , None, fx=0.5, fy=1.0, interpolation=cv2.INTER_CUBIC)
 	return image, angle 
 
+
+### change_brightness: Change the image brightness
+###   Input: 
+###		image: image in a RGB format
+###		factor: the change_brightness will be multiply by this factor 
+###
+###   Output: 
+###      image: the final image
+def change_brightness(image, factor=1.0):
+    image = cv2.cvtColor(image,cv2.COLOR_RGB2HSV)
+    image = np.array(image, dtype = np.float64)
+    image[:,:,2] = image[:,:,2]*factor
+    image[:,:,2][image[:,:,2]>255]  = 255
+    image = np.array(image, dtype = np.uint8)
+    image = cv2.cvtColor(image,cv2.COLOR_HSV2RGB)
+    return image
+
+### plot_histo: 
+###   Plot histogram according to the hist and bins 
+def plot_histo(hist, bins):
+    width = 0.7 * (bins[1] - bins[0])
+    center = (bins[:-1] + bins[1:]) / 2
+    plt.figure()
+    plt.bar(center, hist, align='center', width=width)
+    plt.title('Histogram of angles')
+    plt.xlabel('Angle')
+    plt.ylabel('Number of appearances')
+    plt.show() 
 	
 ### generator: We use it to generate training and validation samples on the fly to the model
 ###   Input: 
@@ -73,12 +108,14 @@ def generator(samples, is_validation=False, batch_size=32, corr_val=0.2, num_aug
 					cam = (idx%num_camera)
 					flipped = int(idx/num_camera)%num_augmn
 					curr_sample = samples[int(idx/(num_camera*num_augmn))]
+					brightness_mode=1
 				else: # we use only the original image from the center camera
 					cam = 0
 					flipped = 0
 					curr_sample = samples[idx]
+					brightness_mode=1
 				
-				image,angle = get_image_angle(curr_sample, cam, flipped, corr_val)
+				image,angle = get_image_angle(curr_sample, cam, flipped, corr_val, brightness_mode)
 				images.append(image)
 				angles.append(angle)
 
@@ -96,8 +133,10 @@ num_camera = 3    # Number of cameras we will use for the training samples
 
 ###
 ### Tune Params
+batch_size = 128               # The betch size for the training and validation
 crop_top, crop_bottom = 65, 25 # By how many pixels to crop form the top and bottom
-corr_val = 0.2                 # by how much to "correct" the angle on the left (corr_val) or right (-corr_val) cameras
+#crop_top, crop_bottom = 32, 12 # By how many pixels to crop form the top and bottom
+corr_val = 0.25                # by how much to "correct" the angle on the left (corr_val) or right (-corr_val) cameras
 
 ###
 ### Plot options
@@ -114,29 +153,61 @@ plot_fit = False
 print()
 isHeader=True;
 lines = []
+all_angles = []
 max_num_of_lines = -1 # put -1 to ignore
-with open ('./data/data/driving_log.csv') as csvfile:
+with open ('./data/driving_log.csv') as csvfile:
 	reader = csv.reader(csvfile)
 	for line in reader:
 		if isHeader:
 			isHeader = False;
 			continue
 		lines.append(line)	
+		all_angles.append(float(line[3]))
 		if (max_num_of_lines!=-1 and len(lines)>max_num_of_lines):
 			break
-		
+
+
+
+			
+
 train_lines, validation_lines = train_test_split(lines, test_size=0.2)
 n_train_org = len(train_lines)
-n_train = len(train_lines)*num_augmn*num_camera
 n_valid = len(validation_lines)
 print('Number of Original Training Points = {}'.format(n_train_org))
-print('Number of Training Points After Augmentation and use of all cameras = {}'.format(n_train))
 print('Number of Validation Points = {}'.format(n_valid))
+
+
+bins = np.arange(-11,13,2)/20.0
+
+hist, bins = np.histogram(np.array(all_angles), bins=bins)
+#plot_histo(hist, bins)
+
+bin_minimal_val = hist.mean()+hist.std()
+balance_per_bin = bin_minimal_val-hist
+balance_per_inst = np.ceil(balance_per_bin/hist)
+balance_per_inst = balance_per_inst.clip(min=0.0).astype(int)
+
+for k in range(n_train_org):
+	train_lines[k][4] = 0.0
+	line = train_lines[k]
+	ang_bin = int(np.floor((float(line[3])-bins.min())*10.0))
+	ang_bin = max(0, min(ang_bin, len(balance_per_inst)-1))
+	for j in range(balance_per_inst[ang_bin]):
+		line[4] = np.random.uniform(low=0.5, high=1.5)
+		train_lines.append(line)
+		all_angles.append(float(line[3]))
+
+hist, bins = np.histogram(np.array(all_angles), bins=bins)
+plot_histo(hist, bins)
+
+n_train = len(train_lines)*num_augmn*num_camera
+print('Number of Training Points After Augmentation and use of all cameras = {}'.format(n_train))
+
 
 ###
 ### compile and train the model using the generator function
-train_generator = generator(train_lines, is_validation=False, batch_size=32, corr_val=corr_val, num_augmn=num_augmn)
-validation_generator = generator(validation_lines, is_validation=True, batch_size=32)
+train_generator = generator(train_lines, is_validation=False, batch_size=batch_size, corr_val=corr_val, num_augmn=num_augmn)
+validation_generator = generator(validation_lines, is_validation=True, batch_size=batch_size)
 
 ### 
 ### One random image as an example and to get the image size
@@ -166,26 +237,28 @@ if plot_example:
 ###
 ### Building our model 
 from keras.models import Sequential
-from keras.layers import Flatten, Dense, Cropping2D, Lambda, Conv2D
+from keras.layers import Flatten, Dense, Cropping2D, Lambda, Conv2D, Dropout
 
 model = Sequential()
 model.add(Cropping2D(cropping=((crop_top,crop_bottom), (0,0)), input_shape=(X_shape[0],X_shape[1],X_shape[2])))
-model.add(Lambda(lambda x: x/255.0 - 0.5))
-model.add(Conv2D(24,5,5,subsample=(2,2),activation='relu'))
-model.add(Conv2D(36,5,5,subsample=(2,2),activation='relu'))
-model.add(Conv2D(48,5,5,subsample=(2,2),activation='relu'))
-model.add(Conv2D(64,3,3,activation='relu'))
-model.add(Conv2D(64,3,3,activation='relu'))
+model.add(Lambda(lambda x: x/127.5 - 1.0))
+model.add(Conv2D(24,5,5,subsample=(2,2),activation='elu'))
+model.add(Conv2D(36,5,5,subsample=(2,2),activation='elu'))
+model.add(Conv2D(48,5,5,subsample=(2,2),activation='elu'))
+model.add(Conv2D(64,3,3,activation='elu'))
+model.add(Conv2D(64,3,3,activation='elu'))
 model.add(Flatten())
 model.add(Dense(100))
+model.add(Dropout(0.5))
 model.add(Dense(50))
+model.add(Dropout(0.2))
 model.add(Dense(10))
 model.add(Dense(1))
 
 model.compile(loss='mse', optimizer='adam')
 history_object = model.fit_generator(train_generator, samples_per_epoch=n_train, \
             validation_data=validation_generator, nb_val_samples=n_valid, \
-            nb_epoch=3)
+            nb_epoch=6)
 
 if plot_fit:
 	plt.figure(2)
