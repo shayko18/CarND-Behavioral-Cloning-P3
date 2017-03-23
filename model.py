@@ -302,23 +302,23 @@ model = Sequential()
 model.add(Cropping2D(cropping=((crop_top,crop_bottom), (0,0)), input_shape=(X_shape[0],X_shape[1],X_shape[2])))  # crop the image to use only relevant information 
 model.add(Lambda(lambda x: x/127.5 - 1.0))                         # normalize the pixels value around 0 [-1 to 1]
 
-# first three 5x5 conv layers. activation is elu (that insert non-linearity), and we subsample by 2x2  
-model.add(Conv2D(24,5,5,subsample=(2,2),activation='elu'))          
-model.add(Conv2D(36,5,5,subsample=(2,2),activation='elu'))         
-model.add(Conv2D(48,5,5,subsample=(2,2),activation='elu'))
+# first three 5x5 conv layers. the striide is 2x2 and the activation is relu (that insert non-linearity)   
+model.add(Conv2D(24,5,5,subsample=(2,2),activation='elu'))    # output is 33x158x24
+model.add(Conv2D(36,5,5,subsample=(2,2),activation='elu'))    # output is 15x77x36
+model.add(Conv2D(48,5,5,subsample=(2,2),activation='elu'))    # output is 6x37x48
 
-# next two 3x3 conv layers. activation is elu
-model.add(Conv2D(64,3,3,activation='elu'))                         
-model.add(Conv2D(64,3,3,activation='elu'))
+# next two 3x3 conv layers. activation is relu
+model.add(Conv2D(64,3,3,activation='elu'))  # output is 4x35x64
+model.add(Conv2D(64,3,3,activation='elu'))  # output is 2x33x64
 
 # next layers are fully connected with some dropout to reduce overfitting 
-model.add(Flatten())                                               
-model.add(Dense(100))
+model.add(Flatten())      # output is 1x4224     
+model.add(Dense(100))     # output is 1x100
 model.add(Dropout(0.5))
-model.add(Dense(50))
-model.add(Dropout(0.2))
-model.add(Dense(10))
-model.add(Dense(1)) # final estimated value from the CNN
+model.add(Dense(50))      # output is 1x50
+model.add(Dropout(0.2))   
+model.add(Dense(10))      # output is 1x10
+model.add(Dense(1))       # final estimated value from the CNN
 
 # we use the mse and the default parameters for the "adam" optimizer algorithm
 model.compile(loss='mse', optimizer='adam')   
