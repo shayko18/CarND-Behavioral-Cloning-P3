@@ -64,7 +64,8 @@ The model.py is divided to four parts:
 
 ####1. An appropriate model architecture has been employed
 
-My model was mainly based on the NVIDIA paper. 
+My model was mainly based on the NVIDIA paper.
+
 * Lines 307-308: First we have a normalization layer. In this layer we first crop the image from the top (about 40%: 65 pixels) and from the bottom (~16%: 25 pixels). After that we normalize the RGB pixels value to be between [-1 to 1) by dividing them by 127.5 and subtracting 1.0
 * Lines 311-313: first three layers (1-3) are 5x5 conv2D layers. the stride is 2x2 and activation is relu
 *  (that insert non-linearity).
@@ -82,7 +83,7 @@ We accomplished this by splitting the driving_log.csv to two portion: (line 222)
 - 80% for the training: Number of Original Training Points = 6428
 - 20% for the validation: Number of Validation Points = 1608
 
-(Later we will talk about using mode data for the training set)
+Later we will talk about using mode data for the training set and validation set (configurable)
 
 In the model we added a dropout layers in order to reduce overfitting.
 The model was tested by running it through the simulator and ensuring that the vehicle could stay on the track.
@@ -91,9 +92,9 @@ The model was tested by running it through the simulator and ensuring that the v
 
 - The model used an adam optimizer, so the learning rate was not tuned manually (model.py line 329).
 - We used batch size of 128. seems to run fast enough and give good results.
-- We used 10 epochs to train the model. It seems to be enough. After that the MSE didn't changed by much.
+- We used 5 epochs to train the model. It seems to be enough. After that the MSE didn't changed by much.
 - The correction factor we used for the left and right cameras was 0.25. We will explain about it later in this writeup
-- We cropped out the not relevant parts from the image: ~40% from the top and 15% from the bottom.
+- We cropped out the not relevant parts from the image: ~40% from the top and ~15% from the bottom.
 
 ####4. Appropriate training data
 
@@ -104,12 +105,12 @@ For the training data we used:
 	* The left camera angle was corrected by 0.25 
 	* The right camera angle was corrected by -0.25 
 * we flipped each image and changed the angle on this flipped image to by the negative of the original angle.
-* In my final solution I **didn't** use the option to augmented the training data using changes in the brightness
+* In my final solution I **didn't** use the option to augmented the training data using changes in the brightness.
 * In my final solution I **didn't** use the option to balance the training data: use more images with low probability angles (big angles in their absolute value)
 
 The bottom line is that for the training data we multiply the original centered image by 6 (3 cameras and flip): Number of Training Points After Augmentation and use of all cameras = 38568
 
-For the validation data we only used the original centered image, because this is what the simulator will use when we test our model.
+For the validation data we have two options. First we can use only the original centered image, because this is what the simulator will use when we test our model. The other option is to also augment the validation data the same way we did for the training data. By doing this we ensure that the validation data and the training data sees the same a-priori distribution of input samples so the MSE will be alligned between them. (we will explain it later).  
 
 ###Model Architecture and Training Strategy
 
@@ -123,9 +124,9 @@ In order to gauge how well the model was working, I split my image and steering 
 
 To combat the overfitting, I modified the model so that I added some dropout stages between the layers.
 
-Then I ran the model with big number of epochs (~10) and I saw that the validation error was constant more or less and the training error was still going down but very slowly, so I thought it was a good place to stop - actually we could have stopped much earlier (even 3 epochs did a good job). 
+Then I ran the model with big number of epochs (~10) and I saw that the validation error was constant more or less and the training error was still going down but very slowly, so I saw that 5 epochs was a good place to stop. 
 
-
+As I talked about in project 2 (Traffic Sign Classifier), there is a question if we want to use in our model the a-priori distribution of the training data (In our case it is the probability for each angle). The a-priori probability could be integrate into the MSE calculation - high probability angles will be more dominated in the total MSE calculation. I decided not to use it here. The next point here is also related to this issue.
 Here is how the MSE of the training and validation data changed as a function of the epochs. We plotted two validation error - one only with the image from the center camera (like the test will use) and the other also with the augmented data (3 cameras + flip). We see that because of the a-priori distribution of the angles, the error only on the center camera is lower, because it usually has small angles which has the highest a-priori probability. In order to compare the train error to the validation error we also plotted the error on validation data that uses all the augmentation - then we see what we expect - the training data error is lower than the validation error. 
 
 ![alt text][image1]
@@ -156,7 +157,7 @@ Here is an example of the image from the center, left, right and their flipped v
 
 ![alt text][image3]
 
-I also consider augmentation of the training data by balancing the histogram of the angles of the images. As we can see below, most of angels were close to 0.0. We can augment the low probability angles by adding more images to those bins with different brightness factor. We didn't do it. 
+I also consider augmentation of the training data by balancing the histogram of the angles of the images. As we can see below, most of angels were close to 0.0. We can augment the low probability angles by adding more images to those bins with different brightness factor. We didn't do it since it was not necessary. Also as I talked about before we could have used the a-priori distribution in our model (so the MSE calculation will take it into account). We also didn't do that. 
 
 Here is the original histogram of the angles:
 
