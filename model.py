@@ -175,6 +175,7 @@ num_camera = 3    # Number of cameras we will use for the training samples. cent
 BATCH_SIZE = 128                                    # The betch size for the training and validation
 N_EPOCH = 5                                         # The number of epochs
 
+valid_only_on_center_img = False                    # If we want to use only the center image as a validation data (without the augmented data)    
 balacing_en = False                                 # Balancing the data. Augmentation for the low probability angles. The augmented images will be with different brightness
 crop_top_ratio, crop_bottom_ratio = 0.406, 0.156    # By what portion (ratio) we want to crop the image form the top and bottom
 corr_val = 0.25                                     # by how much to "correct" the angle on the left (corr_val) or right (-corr_val) cameras
@@ -186,9 +187,9 @@ low_brightness, high_brightness = 0.25, 1.25        # minimal and maximal values
 ###                  Also the augmentation on those images and the cropping we will use.
 ###    plot_hist: Plot the angle histogram before and after balancing (Only if balacing_en is True)
 ###    plot_fit: Plot the model fit (mse) for both the training and validation data as a function of the epoch 
-plot_example = True  
+plot_example = False  
 plot_hist    = balacing_en
-plot_fit     = True
+plot_fit     = False
 
 
 
@@ -209,7 +210,7 @@ with open ('./data/driving_log.csv') as csvfile:
 		if isHeader:              # we skip the first line - this is the header
 			isHeader = False;
 			continue
-		line.append(0.0)          # we append a new column. We might want to use it to set the brightness factor, so we make sure we set it to zero (disable)
+		line.append(1.0)          # we append a new column. We might want to use it to set the brightness factor, so we make sure we set it to 1.0 (disable)
 		lines.append(line)	
 		all_angles.append(float(line[3]))
 		if (max_num_of_lines!=-1 and len(lines)>max_num_of_lines):
@@ -217,12 +218,12 @@ with open ('./data/driving_log.csv') as csvfile:
 
 
 ###
-### Split the lines to training and validation (20%). We print the size of the original training set (before augmentation) an validation set.
+### Split the lines to training and validation (20%). We print the size of the original training set (before augmentation) and validation set.
 train_lines, validation_lines = train_test_split(lines, test_size=0.2)
 n_train_org = len(train_lines)
 n_valid = len(validation_lines)
 print('Number of Original Training Points = {}'.format(n_train_org))
-print('Number of Validation Points = {}'.format(n_valid))
+print('Number of Original Validation Points = {}'.format(n_valid))
 
 ###
 ### If we want to balance the training set according to their angles initial histogram. 
@@ -232,12 +233,16 @@ if balacing_en:
 ###
 ### We print the size of the final training set (after augmentation)
 n_train = len(train_lines)*num_fliplr*num_camera
+
 print('Number of Training Points After Augmentation and use of all cameras = {}'.format(n_train))
+if valid_only_on_center_img==False:
+	n_valid *= (num_fliplr*num_camera)
+	print('Number of Validation Points After Augmentation and use of all cameras = {}'.format(n_valid))
 
 ###
 ### compile and train the model using the generator function
 train_generator = generator(train_lines, is_validation=False, batch_size=BATCH_SIZE, corr_val=corr_val, num_fliplr=num_fliplr)
-validation_generator = generator(validation_lines, is_validation=True, batch_size=BATCH_SIZE)
+validation_generator = generator(validation_lines, is_validation=valid_only_on_center_img, batch_size=BATCH_SIZE, corr_val=corr_val, num_fliplr=num_fliplr)
 
 ### 
 ### One random image as an example and to get the original image size (X_shape)
@@ -302,31 +307,31 @@ model = Sequential()
 model.add(Cropping2D(cropping=((crop_top,crop_bottom), (0,0)), input_shape=(X_shape[0],X_shape[1],X_shape[2])))  # crop the image to use only relevant information 
 model.add(Lambda(lambda x: x/127.5 - 1.0))                         # normalize the pixels value around 0 [-1 to 1]
 
-# first three 5x5 conv layers. the striide is 2x2 and the activation is relu (that insert non-linearity)   
-model.add(Conv2D(24,5,5,subsample=(2,2),activation='elu'))    # output is 33x158x24
-model.add(Conv2D(36,5,5,subsample=(2,2),activation='elu'))    # output is 15x77x36
-model.add(Conv2D(48,5,5,subsample=(2,2),activation='elu'))    # output is 6x37x48
+# first three 5x5 conv layers. the stride is 2x2 and the activation is relu (that insert non-linearity), and we dropout after each layer  
+model.add(Conv2D(24,5,5,subsample=(2,2),activation='relu'))    # output is 33x158x24
+model.add(Conv2D(36,5,5,subsample=(2,2),activation='relu'))    # output is 15x77x36
+model.add(Conv2D(48,5,5,subsample=(2,2),activation='relu'))    # output is 6x37x48
 
 # next two 3x3 conv layers. activation is relu
-model.add(Conv2D(64,3,3,activation='elu'))  # output is 4x35x64
-model.add(Conv2D(64,3,3,activation='elu'))  # output is 2x33x64
+model.add(Conv2D(64,3,3,activation='relu'))  # output is 4x35x64
+model.add(Conv2D(64,3,3,activation='relu'))  # output is 2x33x64
 
 # next layers are fully connected with some dropout to reduce overfitting 
 model.add(Flatten())      # output is 1x4224     
 model.add(Dense(100))     # output is 1x100
-model.add(Dropout(0.5))
+model.add(Dropout(0.5))   # dropout
 model.add(Dense(50))      # output is 1x50
-model.add(Dropout(0.2))   
+model.add(Dropout(0.2))   # dropout
 model.add(Dense(10))      # output is 1x10
 model.add(Dense(1))       # final estimated value from the CNN
 
 # we use the mse and the default parameters for the "adam" optimizer algorithm
 model.compile(loss='mse', optimizer='adam')   
 
-# we use the generator we built so we don't have to store all the images in the memory             
+# we use the generator we built so we don't have to store all the images in the memory            
 history_object = model.fit_generator(train_generator, samples_per_epoch=n_train, \
             validation_data=validation_generator, nb_val_samples=n_valid, \
-            nb_epoch=N_EPOCH) # The number of epochs
+            nb_epoch=N_EPOCH)  # The number of epochs
 
 ###
 ### plot the training loss and the validation loss as a function of the epoch
